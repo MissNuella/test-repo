@@ -1,3 +1,248 @@
+Here's a hands-on Terraform lab that covers modules, `.tfvars`, and workspaces (dev/staging/prod) using a simple AWS resource (S3 bucket) as the practice target. Simple enough to run in under an hour, but touches all the concepts you listed.
+
+## Lab: Multi-Environment Terraform with Modules and Workspaces
+
+**Objective:** Build a reusable Terraform module, parameterize it per environment with `.tfvars`, and use workspaces to manage dev/staging/prod state separately.
+
+**Prerequisites:** Terraform installed, AWS CLI configured with a profile that has S3 permissions.
+
+### Step 1 — Project structure
+
+```
+terraform-lab/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── providers.tf
+├── environments/
+│   ├── dev.tfvars
+│   ├── staging.tfvars
+│   └── prod.tfvars
+└── modules/
+    └── s3-bucket/
+        ├── main.tf
+        ├── variables.tf
+        └── outputs.tf
+```
+
+### Step 2 — Build the module (`modules/s3-bucket/`)
+
+**`modules/s3-bucket/variables.tf`**
+```hcl
+variable "bucket_name" {
+  type = string
+}
+
+variable "environment" {
+  type = string
+}
+
+variable "versioning_enabled" {
+  type    = bool
+  default = false
+}
+
+variable "tags" {
+  type    = map(string)
+  default = {}
+}
+```
+
+**`modules/s3-bucket/main.tf`**
+```hcl
+resource "aws_s3_bucket" "this" {
+  bucket = "${var.bucket_name}-${var.environment}"
+
+  tags = merge(var.tags, {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  })
+}
+
+resource "aws_s3_bucket_versioning" "this" {
+  bucket = aws_s3_bucket.this.id
+  versioning_configuration {
+    status = var.versioning_enabled ? "Enabled" : "Suspended"
+  }
+}
+```
+
+**`modules/s3-bucket/outputs.tf`**
+```hcl
+output "bucket_arn" {
+  value = aws_s3_bucket.this.arn
+}
+
+output "bucket_id" {
+  value = aws_s3_bucket.this.id
+}
+```
+
+### Step 3 — Root config calling the module
+
+**`providers.tf`**
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+```
+
+**`variables.tf`** (root)
+```hcl
+variable "aws_region" {
+  type    = string
+  default = "eu-west-1"
+}
+
+variable "bucket_name" {
+  type = string
+}
+
+variable "environment" {
+  type = string
+}
+
+variable "versioning_enabled" {
+  type    = bool
+  default = false
+}
+```
+
+**`main.tf`** (root)
+```hcl
+module "app_bucket" {
+  source              = "./modules/s3-bucket"
+  bucket_name         = var.bucket_name
+  environment         = var.environment
+  versioning_enabled  = var.versioning_enabled
+  tags = {
+    Project = "terraform-lab"
+    Owner   = "sammy"
+  }
+}
+```
+
+**`outputs.tf`** (root)
+```hcl
+output "bucket_arn" {
+  value = module.app_bucket.bucket_arn
+}
+```
+
+### Step 4 — Per-environment `.tfvars`
+
+**`environments/dev.tfvars`**
+```hcl
+bucket_name        = "sammy-lab"
+environment        = "dev"
+versioning_enabled = false
+aws_region         = "eu-west-1"
+```
+
+**`environments/staging.tfvars`**
+```hcl
+bucket_name        = "sammy-lab"
+environment        = "staging"
+versioning_enabled = true
+aws_region         = "eu-west-1"
+```
+
+**`environments/prod.tfvars`**
+```hcl
+bucket_name        = "sammy-lab"
+environment        = "prod"
+versioning_enabled = true
+aws_region         = "eu-west-1"
+```
+
+### Step 5 — Workspaces, one per environment
+
+```bash
+terraform init
+
+terraform workspace new dev
+terraform workspace new staging
+terraform workspace new prod
+
+terraform workspace list
+```
+
+Each workspace gets its own state file, so dev, staging, and prod never collide even though they share the same code.
+
+### Step 6 — Plan and apply per environment
+
+```bash
+# Dev
+terraform workspace select dev
+terraform plan -var-file="environments/dev.tfvars"
+terraform apply -var-file="environments/dev.tfvars"
+
+# Staging
+terraform workspace select staging
+terraform plan -var-file="environments/staging.tfvars"
+terraform apply -var-file="environments/staging.tfvars"
+
+# Prod
+terraform workspace select prod
+terraform plan -var-file="environments/prod.tfvars"
+terraform apply -var-file="environments/prod.tfvars"
+```
+
+Notice the bucket name resolves differently per environment (`sammy-lab-dev`, `sammy-lab-staging`, `sammy-lab-prod`) because of how the module interpolates `bucket_name` and `environment`.
+
+### Step 7 — Verify workspace isolation
+
+```bash
+terraform workspace show
+terraform state list
+aws s3 ls | grep sammy-lab
+```
+
+You should see three separate buckets, and switching workspaces shows only the resources belonging to that workspace's state.
+
+### Step 8 — Optional stretch goals
+
+- Use `${terraform.workspace}` directly inside `main.tf` instead of passing `environment` as a variable, and compare the two approaches
+- Add a `count` or `for_each` in the module to create multiple buckets per environment
+- Move state to an S3 backend with workspace-key prefixing (`key = "envs/${terraform.workspace}/terraform.tfstate"`) to simulate remote state in a team setting
+- Add a `terraform.tfvars` at root for shared defaults and show variable precedence when combined with `-var-file`
+
+### Step 9 — Cleanup
+
+```bash
+terraform workspace select dev
+terraform destroy -var-file="environments/dev.tfvars"
+
+terraform workspace select staging
+terraform destroy -var-file="environments/staging.tfvars"
+
+terraform workspace select prod
+terraform destroy -var-file="environments/prod.tfvars"
+
+terraform workspace select default
+terraform workspace delete dev
+terraform workspace delete staging
+terraform workspace delete prod
+```
+
+### Key concepts this lab reinforces
+- **Modules** — encapsulating a resource with its own variables/outputs, calling it from root
+- **`.tfvars`** — environment-specific values loaded via `-var-file`
+- **Workspaces** — isolated state per environment using the same codebase
+- **Interpolation** — combining variables (or `terraform.workspace`) to produce environment-aware resource names
+
+Want this as a downloadable file, or should I extend it toward your devopsdock EKS setup (e.g. parameterizing EKS node groups per environment instead of S3)?
+
+
 # Hands-On DevSecOps Lab: Docker Build Caching & GitHub Container Registry (GHCR)
 
 | | |
