@@ -40,13 +40,17 @@ jobs:
         with:
           context: ./src/${{ inputs.service }}
           load: true
-          tags: ${{ inputs.service }}:ci
+          tags: ghcr.io/missnuella/test-repo/${{ inputs.service }}:${{ github.sha }}
 
       - name: Scan Docker image
         uses: aquasecurity/trivy-action@v0.35.0
         with:
-          image-ref: ${{ inputs.service }}:ci
+          image-ref: ghcr.io/missnuella/test-repo/${{ inputs.service }}:${{ github.sha }}
           format: table
           exit-code: '0'
           ignore-unfixed: true
           severity: CRITICAL,HIGH
+          
+      - name: Push Docker image to GHCR
+        run: |
+          docker push ghcr.io/missnuella/test-repo/${{ inputs.service }}:${{ github.sha }}
