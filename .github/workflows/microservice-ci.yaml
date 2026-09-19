@@ -43,7 +43,7 @@ jobs:
           tags: ${{ inputs.service }}:ci
 
       - name: Scan Docker image
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ inputs.service }}:ci
           format: table
