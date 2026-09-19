@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-frontend:
     uses: ./.github/workflows/microservice-ci.yaml
