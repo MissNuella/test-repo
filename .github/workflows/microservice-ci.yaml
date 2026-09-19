@@ -1,1 +1,22 @@
+name: Microservice CI
 
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Name of the microservice"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show service name
+        run: |
+          echo "Building service: ${{ inputs.service }}"
+          echo "Service directory: ./src/${{ inputs.service }}"
